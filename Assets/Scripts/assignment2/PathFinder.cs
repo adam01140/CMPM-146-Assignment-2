@@ -40,123 +40,103 @@ public class PathFinder : MonoBehaviour
         return Vector3.Distance(current, target);
     }
 
-    // Insert entry into frontier maintaining sorted order by fScore
-    private static void InsertSorted(List<AStarEntry> frontier, AStarEntry entry)
-    {
-        for (int i = 0; i < frontier.Count; i++)
-        {
-            if (entry.fScore < frontier[i].fScore)
-            {
-                frontier.Insert(i, entry);
-                return;
-            }
-        }
-        frontier.Add(entry);
-    }
-
     public static (List<Vector3>, int) AStar(GraphNode start, GraphNode destination, Vector3 target)
     {
-        // Initialize data structures
-        Dictionary<int, AStarEntry> allNodes = new Dictionary<int, AStarEntry>();
-        List<AStarEntry> frontier = new List<AStarEntry>();
-        HashSet<int> explored = new HashSet<int>();
+        var frontier = new List<AStarEntry>();
+        var explored = new HashSet<int>();
+        var nodeInfo = new Dictionary<int, AStarEntry>();
         int nodesExpanded = 0;
 
-        // Create initial entry
-        AStarEntry startEntry = new AStarEntry(
+        // Initialize start node
+        var startEntry = new AStarEntry(
             start,
             null,
             null,
             0,
             Heuristic(start.GetCenter(), target)
         );
-
-        // Add start node to frontier and allNodes
         frontier.Add(startEntry);
-        allNodes[start.GetID()] = startEntry;
+        nodeInfo[start.GetID()] = startEntry;
 
         while (frontier.Count > 0)
         {
             // Get node with lowest f-score
-            AStarEntry current = frontier[0];
+            var current = frontier[0];
             frontier.RemoveAt(0);
 
-            // If we reached the destination
             if (current.node == destination)
             {
-                List<Vector3> path = new List<Vector3>();
-                AStarEntry pathNode = current;
+                // Build path from destination to start
+                var path = new List<Vector3>();
+                var currentNode = current;
 
-                // Build path backwards from destination
-                while (pathNode.cameFrom != null)
+                while (currentNode.cameFrom != null)
                 {
-                    path.Insert(0, pathNode.wallUsed.midpoint);
-                    pathNode = allNodes[pathNode.cameFrom.GetID()];
+                    path.Insert(0, currentNode.wallUsed.midpoint);
+                    currentNode = nodeInfo[currentNode.cameFrom.GetID()];
                 }
-
-                // Add final target position
+                
                 path.Add(target);
                 return (path, nodesExpanded);
             }
 
-            // Mark node as explored
-            explored.Add(current.node.GetID());
+            int currentId = current.node.GetID();
+            if (explored.Contains(currentId))
+                continue;
+
+            explored.Add(currentId);
             nodesExpanded++;
 
             // Expand neighbors
-            foreach (GraphNeighbor neighbor in current.node.GetNeighbors())
+            foreach (var neighbor in current.node.GetNeighbors())
             {
-                GraphNode nextNode = neighbor.GetNode();
-                int nextID = nextNode.GetID();
+                var nextNode = neighbor.GetNode();
+                int nextId = nextNode.GetID();
 
-                // Skip if already explored
-                if (explored.Contains(nextID))
+                if (explored.Contains(nextId))
                     continue;
 
-                // Calculate new g-score
                 float newGScore = current.gScore + Vector3.Distance(
                     current.node.GetCenter(),
                     nextNode.GetCenter()
                 );
 
-                // Calculate f-score for this neighbor
-                float newFScore = newGScore + Heuristic(nextNode.GetCenter(), target);
+                if (!nodeInfo.TryGetValue(nextId, out var existingEntry) || newGScore < existingEntry.gScore)
+                {
+                    var newFScore = newGScore + Heuristic(nextNode.GetCenter(), target);
+                    var newEntry = existingEntry;
 
-                // Check if we should add or update this neighbor
-                if (!allNodes.ContainsKey(nextID))
-                {
-                    // New node - add to frontier
-                    AStarEntry newEntry = new AStarEntry(
-                        nextNode,
-                        current.node,
-                        neighbor.GetWall(),
-                        newGScore,
-                        newFScore
-                    );
-                    InsertSorted(frontier, newEntry);
-                    allNodes[nextID] = newEntry;
-                }
-                else
-                {
-                    // Existing node - update if this path is better
-                    AStarEntry existingEntry = allNodes[nextID];
-                    if (newGScore < existingEntry.gScore)
+                    if (existingEntry != null)
                     {
-                        // Remove from frontier if present
                         frontier.Remove(existingEntry);
-                        
                         existingEntry.cameFrom = current.node;
                         existingEntry.wallUsed = neighbor.GetWall();
                         existingEntry.gScore = newGScore;
                         existingEntry.fScore = newFScore;
-
-                        InsertSorted(frontier, existingEntry);
+                        newEntry = existingEntry;
                     }
+                    else
+                    {
+                        newEntry = new AStarEntry(
+                            nextNode,
+                            current.node,
+                            neighbor.GetWall(),
+                            newGScore,
+                            newFScore
+                        );
+                        nodeInfo[nextId] = newEntry;
+                    }
+
+                    // Insert maintaining sorted order by fScore
+                    int insertIndex = 0;
+                    while (insertIndex < frontier.Count && frontier[insertIndex].fScore <= newEntry.fScore)
+                        insertIndex++;
+                    frontier.Insert(insertIndex, newEntry);
                 }
             }
         }
 
-        // No path found
+        // No path found - return direct path to target
         return (new List<Vector3>() { target }, nodesExpanded);
     }
 
@@ -184,31 +164,22 @@ public class PathFinder : MonoBehaviour
     {
         if (graph == null) return;
 
-        // find start and destination nodes in graph
         GraphNode start = null;
         GraphNode destination = null;
+
         foreach (var n in graph.all_nodes)
         {
             if (Util.PointInPolygon(transform.position, n.GetPolygon()))
-            {
                 start = n;
-            }
             if (Util.PointInPolygon(target, n.GetPolygon()))
-            {
                 destination = n;
-            }
         }
-        if (destination != null)
-        {
-            // only find path if destination is inside graph
-            EventBus.ShowTarget(target);
-            (List<Vector3> path, int expanded) = PathFinder.AStar(start, destination, target);
 
-            Debug.Log("found path of length " + path.Count + " expanded " + expanded + " nodes, out of: " + graph.all_nodes.Count);
+        if (start != null && destination != null)
+        {
+            var (path, _) = AStar(start, destination, target);
             EventBus.SetPath(path);
         }
-        
-
     }
 
     
